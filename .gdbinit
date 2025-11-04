@@ -2358,6 +2358,22 @@ class Breakpoints(Dashboard.Module):
             }
         }
 
+# Custom commands ----------------------------------------------------------
+
+# class GhCommand(gdb.Command):
+#     '''Custom command to print hello message.'''
+#     # def __init__(self):
+#     #     super(GhCommand, self).__init__('gh', gdb.COMMAND_USER)
+
+#     def label(self):
+#         return 'Gh'
+
+#     def lines(self, term_width, term_height, style_changed):
+#         return ['hello']
+
+# # Register the custom command
+# GhCommand()
+
 # XXX traceback line numbers in this Python block must be increased by 1
 end
 
