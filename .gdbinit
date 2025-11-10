@@ -35,7 +35,45 @@ import math
 import os
 import re
 import struct
+import threading
 import traceback
+import site
+import urllib.error
+import urllib.request
+
+OpenAI = None
+
+# External API configuration ------------------------------------------------
+
+DEEPSEEK_API_KEY = open('~/.deepseek/api_key').read().strip()#""
+#print(DEEPSEEK_API_KEY) 
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_MODEL = "deepseek-chat"
+
+
+def _extend_sys_path_from_venv():
+    import sys
+
+    python_tag = 'python{}.{}'.format(sys.version_info.major, sys.version_info.minor)
+    venv_candidates = [
+        os.getenv('GH_GEMINI_VENV'),
+        os.getenv('VIRTUAL_ENV'),
+        os.path.join(os.path.dirname(__file__), '.venv') if '__file__' in globals() else None
+    ]
+
+    for venv in filter(None, venv_candidates):
+        site_packages = os.path.join(venv, 'lib', python_tag, 'site-packages')
+        if os.path.isdir(site_packages):
+            site.addsitedir(site_packages)
+            return
+
+
+_extend_sys_path_from_venv()
+
+try:
+    from openai import OpenAI
+except ImportError:
+    pass
 
 # Common attributes ------------------------------------------------------------
 
@@ -2360,19 +2398,163 @@ class Breakpoints(Dashboard.Module):
 
 # Custom commands ----------------------------------------------------------
 
-# class GhCommand(gdb.Command):
-#     '''Custom command to print hello message.'''
-#     # def __init__(self):
-#     #     super(GhCommand, self).__init__('gh', gdb.COMMAND_USER)
+class GhCommand(gdb.Command):
+    '''使用 DeepSeek API 回答调试问题，命令格式：gh <问题>。'''
 
-#     def label(self):
-#         return 'Gh'
+    def __init__(self):
+        super(GhCommand, self).__init__('gh', gdb.COMMAND_USER)
 
-#     def lines(self, term_width, term_height, style_changed):
-#         return ['hello']
+    def invoke(self, arg, from_tty):
+        question = Dashboard.parse_arg(arg).strip()
+        if not question:
+            Dashboard.err('请提供问题，例如：gh 断点下在printf')
+            return
 
-# # Register the custom command
-# GhCommand()
+        if OpenAI is None:
+            Dashboard.err('未找到 openai 库，请先执行：pip install openai')
+            return
+
+        # 这是我们设计的 Prompt
+        system_prompt = """
+你是一个 GDB 调试命令生成器。你的任务是将用户的自然语言描述准确地转换为 GDB 命令。
+
+# 规则：
+1.  **只输出 GDB 命令**，不要包含任何额外的解释、代码块标记（如 ```）、或者 "GDB 响应：" 之类的文字。
+2.  如果用户的意图不明确或无法转换为 GDB 命令，请输出 "无法识别的命令"。
+3.  分析用户的意图，并使用最合适的 GDB 命令和参数。
+
+# 示例：
+- 用户问题: "在 main 函数下断点"
+- 你的回答: "b main"
+
+- 用户问题: "断在printk"
+- 你的回答: "b printk"
+
+- 用户问题: "在第 50 行设置一个断点"
+- 你的回答: "b 50"
+
+- 用户问题: "当变量 x 的值等于 10 时，在第 25 行中断"
+- 你的回答: "b 25 if x == 10"
+
+- 用户问题: "打印变量 a 的值"
+- 你的回答: "p a"
+
+- 用户问题: "用十六进制打印变量 my_var"
+- 你的回答: "p /x my_var"
+
+- 用户问题: "查看当前堆栈信息"
+- 你的回答: "bt"
+
+- 用户问题: "继续执行"
+- 你的回答: "c"
+
+- 用户问题: "下一步"
+- 你的回答: "n"
+
+- 用户问题: "进入函数"
+- 你的回答: "s"
+
+- 用户问题: "删除所有断点"
+- 你的回答: "delete"
+
+- 用户问题: "你好"
+- 你的回答: "无法识别的命令"
+"""
+        
+        try:
+            client = OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL
+            )
+            response = client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                stream=False
+            )
+            choice = response.choices[0] if response.choices else None
+            answer = choice.message.content.strip() if choice and choice.message else None
+
+            if answer:
+                gdb.write('建议命令: {}\n'.format(answer))
+                try:
+                    user_input = input('按回车执行，输入任意内容后回车取消：')
+                except EOFError:
+                    user_input = None
+                if user_input is not None and user_input.strip() == '':
+                    gdb.write('执行: {}\n'.format(answer))
+                    gdb.execute(answer)
+                else:
+                    gdb.write('已取消执行。\n')
+            else:
+                gdb.write('DeepSeek 未返回有效命令。\n原始响应: {}\n'.format(response))
+
+        except Exception as exc:
+            Dashboard.err('调用 DeepSeek 失败：{}'.format(exc))
+
+
+class WhatIsCommand(gdb.Command):
+    '''使用 DeepSeek API 简要介绍寄存器作用，命令格式：whatis <寄存器名>。'''
+
+    def __init__(self):
+        super(WhatIsCommand, self).__init__('whatis', gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        register_name = Dashboard.parse_arg(arg).strip()
+        if not register_name:
+            Dashboard.err('请提供寄存器名称，例如：whatis rax')
+            return
+
+        if OpenAI is None:
+            Dashboard.err('未找到 openai 库，请先执行：pip install openai')
+            return
+
+        system_prompt = """
+你是一名专注于 RISC-V 架构的处理器导师，需要为调试者快速解释寄存器信息。
+
+# 输出要求：
+1. 输出三行内容：
+   - 第一行：用途(中文)：<不超过30个汉字的中文描述，强调寄存器在 RISC-V 中的作用>
+   - 第二行：Purpose (EN): <不超过25个英文单词的简介>
+   - 第三行：位图：<使用简洁的位域图例，例如 "31:20=..., 19:12=..., 11:0=..."，若部分位未定义写作 "保留" 或 "reserved">
+2. 若寄存器不存在标准位定义，可在位图中写 "位图：未公开标准位定义"。
+3. 禁止添加示例、代码块、额外说明或空行。
+"""
+
+        user_prompt = '寄存器名称：{}'.format(register_name)
+
+        try:
+            client = OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url=DEEPSEEK_BASE_URL
+            )
+            response = client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                stream=False
+            )
+            choice = response.choices[0] if response.choices else None
+            answer = choice.message.content.strip() if choice and choice.message else None
+
+            if answer:
+                gdb.write('{} -> {}\n'.format(register_name, answer))
+            else:
+                gdb.write('DeepSeek 未返回有效说明。\n原始响应: {}\n'.format(response))
+
+        except Exception as exc:
+            Dashboard.err('调用 DeepSeek 失败：{}'.format(exc))
+# Register the custom command
+GhCommand()
+WhatIsCommand()
+try:
+    gdb.execute('alias -a wi = whatis')
+except gdb.error:
+    pass
 
 # XXX traceback line numbers in this Python block must be increased by 1
 end
