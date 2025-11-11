@@ -45,7 +45,7 @@ OpenAI = None
 
 # External API configuration ------------------------------------------------
 
-DEEPSEEK_API_KEY = open('~/.deepseek/api_key').read().strip()#""
+DEEPSEEK_API_KEY = open('../../../../code/.api_key').read().strip()#""
 #print(DEEPSEEK_API_KEY) 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
@@ -2430,12 +2430,6 @@ class GhCommand(gdb.Command):
 - 用户问题: "断在printk"
 - 你的回答: "b printk"
 
-- 用户问题: "在第 50 行设置一个断点"
-- 你的回答: "b 50"
-
-- 用户问题: "当变量 x 的值等于 10 时，在第 25 行中断"
-- 你的回答: "b 25 if x == 10"
-
 - 用户问题: "打印变量 a 的值"
 - 你的回答: "p a"
 
@@ -2456,6 +2450,9 @@ class GhCommand(gdb.Command):
 
 - 用户问题: "删除所有断点"
 - 你的回答: "delete"
+
+- 用户问题: "断在stvec"
+- 你的回答: "b *$stvec"
 
 - 用户问题: "你好"
 - 你的回答: "无法识别的命令"
@@ -2495,8 +2492,359 @@ class GhCommand(gdb.Command):
             Dashboard.err('调用 DeepSeek 失败：{}'.format(exc))
 
 
+REGISTER_DATABASE = {
+    
+    
+    "pc": {
+        "zh": "程序计数器，保存着将要执行的指令的地址。",
+        "en": "Program counter, holds the address of the instruction to be executed.",
+        "bitmap": "MXLEN-1:0=指令地址",
+        "bits": {}
+    },
+    "mstatus": {
+        "zh": "机器状态寄存器。该寄存器用于跟踪和控制硬件线程（hart）的当前操作状态，包含中断使能、先前特权级别和各种扩展状态的字段。",
+        "en": "Machine Status Register. It keeps track of and controls the hart’s current operating state, with fields for interrupt enables, previous privilege levels, and various extension statuses.",
+        "bitmap": "63=SD, 37=MBE, 36=SBE, 35:34=SXL, 33:32=UXL, 22=TSR, 21=TW, 20=TVM, 19=MXR, 18=SUM, 17=MPRV, 16:15=XS, 14:13=FS, 12:11=MPP, 10:9=VS, 8=SPP, 7=MPIE, 6=UBE, 5=SPIE, 3=MIE, 1=SIE",
+        "bits": {
+            "SD": {
+                "zh": "状态脏位。这是一个只读位，总结了FS、VS或XS字段中任何一个是否为“脏”状态，表示有需要保存的扩展上下文。",
+                "en": "Status Dirty. A read-only bit that summarizes whether either the FS, VS, or XS fields are in the 'Dirty' state, indicating that extended context needs to be saved.",
+                "bitmap": "bit 63/31=SD"
+            },
+            "MPRV": {
+                "zh": "修改特权级别。当设置为1时，M模式下的加载和存储操作将根据MPP字段中指定的特权级别进行地址转换和保护。",
+                "en": "Modify PRiVilege. When set to 1, load and store memory accesses in M-mode are performed with the privilege level specified in the MPP field.",
+                "bitmap": "bit 17=MPRV"
+            },
+            "SUM": {
+                "zh": "允许监管者访问用户内存。当设置为1时，S模式可以访问标记为用户模式（U=1）的页。",
+                "en": "Permit Supervisor User Memory access. When set, S-mode is permitted to access pages marked for User mode (U=1).",
+                "bitmap": "bit 18=SUM"
+            },
+            "MXR": {
+                "zh": "使可执行页可读。当设置为1时，允许从标记为可执行但不可读的页中加载数据。",
+                "en": "Make eXecutable Readable. When set, loads are permitted from pages marked executable but not readable.",
+                "bitmap": "bit 19=MXR"
+            },
+            "TVM": {
+                "zh": "陷阱虚拟内存。当设置为1时，在S模式下尝试访问satp寄存器或执行SFENCE.VMA指令将导致非法指令异常。",
+                "en": "Trap Virtual Memory. When set, attempts to read or write the satp CSR or execute an SFENCE.VMA instruction while in S-mode will cause an illegal instruction exception.",
+                "bitmap": "bit 20=TVM"
+            },
+            "MIE": {
+                "zh": "机器中断使能。用于全局启用或禁用机器级中断。",
+                "en": "Machine Interrupt Enable. Global interrupt-enable bit for machine-level interrupts.",
+                "bitmap": "bit 3=MIE"
+            },
+            "SIE": {
+                "zh": "监管者中断使能。用于全局启用或禁用监管者级中断。",
+                "en": "Supervisor Interrupt Enable. Global interrupt-enable bit for supervisor-level interrupts.",
+                "bitmap": "bit 1=SIE"
+            },
+            "MPIE": {
+                "zh": "先前的机器中断使能。在陷阱发生时，保存MIE位先前的值。",
+                "en": "Machine Previous Interrupt Enable. Stores the value of MIE prior to a trap.",
+                "bitmap": "bit 7=MPIE"
+            },
+            "SPIE": {
+                "zh": "先前的监管者中断使能。在陷阱发生时，保存SIE位先前的值。",
+                "en": "Supervisor Previous Interrupt Enable. Stores the value of SIE prior to a trap.",
+                "bitmap": "bit 5=SPIE"
+            },
+            "MPP": {
+                "zh": "先前的机器特权模式。指示在进入机器模式陷阱之前硬件线程所处的特权级别。",
+                "en": "Machine Previous Privilege. Indicates the privilege level of the hart before entering a machine-mode trap.",
+                "bitmap": "bits 12:11=MPP"
+            },
+            "SPP": {
+                "zh": "先前的监管者特权模式。指示在进入监管者模式陷阱之前硬件线程所处的特权级别。",
+                "en": "Supervisor Previous Privilege. Indicates the privilege level of the hart before entering a supervisor-mode trap.",
+                "bitmap": "bit 8=SPP"
+            }
+        }
+    },
+    "misa": {
+        "zh": "机器ISA寄存器。报告硬件线程（hart）支持的指令集体系结构（ISA），包括基本整数ISA宽度（MXL）和已实现的A-Z标准扩展。",
+        "en": "Machine ISA Register. Reports the ISA supported by the hart, including the base integer ISA width (MXL) and the implemented standard extensions A-Z.",
+        "bitmap": "MXLEN-1:MXLEN-2=MXL, 25:0=Extensions",
+        "bits": {
+            "MXL": {
+                "zh": "机器ISA宽度。编码了机器模式下的原生整数ISA宽度（例如，32位，64位或128位）。",
+                "en": "Machine XLEN. Encodes the native base integer ISA width in M-mode (e.g., 32-bit, 64-bit, or 128-bit).",
+                "bitmap": "MXLEN-1:MXLEN-2=MXL"
+            },
+            "Extensions": {
+                "zh": "扩展支持。这是一个位图，每一位（0到25）对应一个字母（A到Z），指示相应的标准扩展是否被实现。",
+                "en": "Extensions Support. A bitmask where each bit from 0 to 25 corresponds to a letter from A to Z, indicating whether the corresponding standard extension is implemented.",
+                "bitmap": "25:0=Extensions"
+            }
+        }
+    },
+    "mie": {
+        "zh": "机器中断使能寄存器。该寄存器中的位用于使能或禁用各个机器级中断。",
+        "en": "Machine Interrupt-Enable Register. Contains bits to enable or disable individual machine-level interrupts.",
+        "bitmap": "11=MEIE, 9=SEIE, 7=MTIE, 5=STIE, 3=MSIE, 1=SSIE",
+        "bits": {
+            "MEIE": { "zh": "机器外部中断使能", "en": "Machine External Interrupt Enable", "bitmap": "bit 11=MEIE" },
+            "SEIE": { "zh": "监管者外部中断使能", "en": "Supervisor External Interrupt Enable", "bitmap": "bit 9=SEIE" },
+            "MTIE": { "zh": "机器定时器中断使能", "en": "Machine Timer Interrupt Enable", "bitmap": "bit 7=MTIE" },
+            "STIE": { "zh": "监管者定时器中断使能", "en": "Supervisor Timer Interrupt Enable", "bitmap": "bit 5=STIE" },
+            "MSIE": { "zh": "机器软件中断使能", "en": "Machine Software Interrupt Enable", "bitmap": "bit 3=MSIE" },
+            "SSIE": { "zh": "监管者软件中断使能", "en": "Supervisor Software Interrupt Enable", "bitmap": "bit 1=SSIE" }
+        }
+    },
+    "mip": {
+        "zh": "机器中断挂起寄存器。该寄存器中的位指示哪些机器级中断当前正处于挂起状态。",
+        "en": "Machine Interrupt-Pending Register. Contains bits indicating which machine-level interrupts are currently pending.",
+        "bitmap": "11=MEIP, 9=SEIP, 7=MTIP, 5=STIP, 3=MSIP, 1=SSIP",
+        "bits": {
+            "MEIP": { "zh": "机器外部中断挂起", "en": "Machine External Interrupt Pending", "bitmap": "bit 11=MEIP" },
+            "SEIP": { "zh": "监管者外部中断挂起", "en": "Supervisor External Interrupt Pending", "bitmap": "bit 9=SEIP" },
+            "MTIP": { "zh": "机器定时器中断挂起", "en": "Machine Timer Interrupt Pending", "bitmap": "bit 7=MTIP" },
+            "STIP": { "zh": "监管者定时器中断挂起", "en": "Supervisor Timer Interrupt Pending", "bitmap": "bit 5=STIP" },
+            "MSIP": { "zh": "机器软件中断挂起", "en": "Machine Software Interrupt Pending", "bitmap": "bit 3=MSIP" },
+            "SSIP": { "zh": "监管者软件中断挂起", "en": "Supervisor Software Interrupt Pending", "bitmap": "bit 1=SSIP" }
+        }
+    },
+    "mtvec": {
+        "zh": "机器陷阱向量基地址寄存器。保存机器模式陷阱处理程序的基地址，并配置向量模式（直接或向量化）。",
+        "en": "Machine Trap-Vector Base-Address Register. Holds the base address of the machine-mode trap handler and configures the vectoring mode (Direct or Vectored).",
+        "bitmap": "MXLEN-1:2=BASE, 1:0=MODE",
+        "bits": {
+            "BASE": {
+                "zh": "陷阱处理程序的基地址。必须是4字节对齐的。",
+                "en": "Base address of the trap handler. Must be 4-byte aligned.",
+                "bitmap": "MXLEN-1:2=BASE"
+            },
+            "MODE": {
+                "zh": "陷阱处理模式。0表示直接模式（所有陷阱都跳转到BASE），1表示向量模式（中断跳转到BASE + 4 * cause）。",
+                "en": "Trap handling mode. 0 for Direct mode (all traps jump to BASE), 1 for Vectored mode (interrupts jump to BASE + 4 * cause).",
+                "bitmap": "1:0=MODE"
+            }
+        }
+    },
+    "mepc": {
+        "zh": "机器异常程序计数器。在发生陷阱时，该寄存器被写入导致陷阱的指令的虚拟地址。MRET指令用它来返回。",
+        "en": "Machine Exception Program Counter. When a trap is taken, this register is written with the virtual address of the instruction that caused the trap. Used by MRET to return.",
+        "bitmap": "MXLEN-1:0=异常返回地址",
+        "bits": {}
+    },
+    "mcause": {
+        "zh": "机器原因寄存器。指示发生陷阱的原因。最高位表示是中断还是异常，低位是具体的中断或异常代码。",
+        "en": "Machine Cause Register. Indicates the reason for the trap. The most significant bit indicates an interrupt or an exception, and the lower bits are the specific interrupt or exception code.",
+        "bitmap": "MXLEN-1=Interrupt, MXLEN-2:0=Exception Code",
+        "bits": {
+            "Interrupt": {
+                "zh": "中断标志位。如果为1，表示陷阱是由中断引起的；如果为0，表示是由异常引起的。",
+                "en": "Interrupt flag. If 1, the trap was caused by an interrupt; if 0, it was caused by an exception.",
+                "bitmap": "MXLEN-1=Interrupt"
+            },
+            "Exception Code": {
+                "zh": "异常/中断代码。指示具体的中断或异常类型。",
+                "en": "Exception/Interrupt Code. Identifies the specific type of the interrupt or exception.",
+                "bitmap": "MXLEN-2:0=Exception Code"
+            }
+        }
+    },
+    "mtval": {
+        "zh": "机器陷阱值寄存器。提供与陷阱相关的附加信息，例如在地址错位、访问故障或页面故障异常中出错的虚拟地址。",
+        "en": "Machine Trap Value Register. Provides additional information related to a trap, such as the faulting virtual address on an address-misaligned, access-fault, or page-fault exception.",
+        "bitmap": "MXLEN-1:0=异常相关信息",
+        "bits": {}
+    },
+    "mscratch": {
+        "zh": "机器暂存寄存器。由机器模式代码专用，通常用于在进入陷阱处理程序时保存一个指向硬件线程本地上下文空间的指针。",
+        "en": "Machine Scratch Register. Dedicated for use by machine mode, typically to hold a pointer to a hart-local context space upon entering a trap handler.",
+        "bitmap": "MXLEN-1:0=暂存数据",
+        "bits": {}
+    },
+    "sstatus": {
+        "zh": "监管者状态寄存器。是mstatus寄存器的一个子集，用于跟踪和控制处理器在监管者模式下的当前操作状态。",
+        "en": "Supervisor Status Register. A subset of the mstatus register for tracking and controlling the processor's current operating state in supervisor mode.",
+        "bitmap": "63=SD, 33:32=UXL, 19=MXR, 18=SUM, 16:15=XS, 14:13=FS, 8=SPP, 6=UBE, 5=SPIE, 1=SIE",
+        "bits": {
+            "SD": {
+                "zh": "状态脏位。只读位，总结了FS、VS或XS字段中任何一个是否为“脏”状态。",
+                "en": "Status Dirty. Read-only bit that summarizes whether the FS, VS, or XS fields are 'Dirty'.",
+                "bitmap": "bit 63/31=SD"
+            },
+            "UXL": {
+                "zh": "用户模式ISA宽度。控制U模式下的XLEN值（仅在RV64中）。",
+                "en": "User mode XLEN. Controls the value of XLEN for U-mode (in RV64 only).",
+                "bitmap": "bits 33:32=UXL"
+            },
+            "MXR": { "zh": "使可执行页可读。", "en": "Make eXecutable Readable.", "bitmap": "bit 19=MXR" },
+            "SUM": { "zh": "允许监管者访问用户内存。", "en": "Permit Supervisor User Memory access.", "bitmap": "bit 18=SUM" },
+            "XS": { "zh": "扩展上下文状态", "en": "Extension Context Status", "bitmap": "bits 16:15=XS" },
+            "FS": { "zh": "浮点单元状态", "en": "Floating-point Unit Status", "bitmap": "bits 14:13=FS" },
+            "VS": { "zh": "向量单元状态", "en": "Vector Unit Status", "bitmap": "bits 10:9=VS" },
+            "SPP": { "zh": "先前的监管者特权模式", "en": "Supervisor Previous Privilege", "bitmap": "bit 8=SPP" },
+            "UBE": { "zh": "用户模式字节序。控制U模式下的内存访问字节序。", "en": "User Big Endian. Controls endianness of memory accesses from U-mode.", "bitmap": "bit 6=UBE" },
+            "SPIE": { "zh": "先前的监管者中断使能", "en": "Supervisor Previous Interrupt Enable", "bitmap": "bit 5=SPIE" },
+            "SIE": { "zh": "监管者中断使能", "en": "Supervisor Interrupt Enable", "bitmap": "bit 1=SIE" }
+        }
+    },
+    "sie": {
+        "zh": "监管者中断使能寄存器。该寄存器中的位用于使能或禁用各个监管者级中断。",
+        "en": "Supervisor Interrupt-Enable Register. Contains bits to enable or disable individual supervisor-level interrupts.",
+        "bitmap": "9=SEIE, 5=STIE, 1=SSIE",
+        "bits": {
+            "SEIE": { "zh": "监管者外部中断使能", "en": "Supervisor External Interrupt Enable", "bitmap": "bit 9=SEIE" },
+            "STIE": { "zh": "监管者定时器中断使能", "en": "Supervisor Timer Interrupt Enable", "bitmap": "bit 5=STIE" },
+            "SSIE": { "zh": "监管者软件中断使能", "en": "Supervisor Software Interrupt Enable", "bitmap": "bit 1=SSIE" }
+        }
+    },
+    "sip": {
+        "zh": "监管者中断挂起寄存器。该寄存器中的位指示哪些监管者级中断当前正处于挂起状态。",
+        "en": "Supervisor Interrupt-Pending Register. Contains bits indicating which supervisor-level interrupts are currently pending.",
+        "bitmap": "9=SEIP, 5=STIP, 1=SSIP",
+        "bits": {
+            "SEIP": { "zh": "监管者外部中断挂起", "en": "Supervisor External Interrupt Pending", "bitmap": "bit 9=SEIP" },
+            "STIP": { "zh": "监管者定时器中断挂起", "en": "Supervisor Timer Interrupt Pending", "bitmap": "bit 5=STIP" },
+            "SSIP": { "zh": "监管者软件中断挂起", "en": "Supervisor Software Interrupt Pending", "bitmap": "bit 1=SSIP" }
+        }
+    },
+    "sepc": {
+        "zh": "监管者异常程序计数器。在监管者模式下发生陷阱时，该寄存器被写入导致陷阱的指令的虚拟地址。SRET指令用它来返回。",
+        "en": "Supervisor Exception Program Counter. When a trap is taken into S-mode, this register is written with the virtual address of the instruction that caused the trap. Used by SRET to return.",
+        "bitmap": "SXLEN-1:0=异常返回地址",
+        "bits": {}
+    },
+    "scause": {
+        "zh": "监管者原因寄存器。指示在监管者模式下发生陷阱的原因。",
+        "en": "Supervisor Cause Register. Indicates the reason for a trap taken into S-mode.",
+        "bitmap": "SXLEN-1=Interrupt, SXLEN-2:0=Exception Code",
+        "bits": {
+             "Interrupt": {
+                "zh": "中断标志位。如果为1，表示陷阱是由中断引起的；如果为0，表示是由异常引起的。",
+                "en": "Interrupt flag. If 1, the trap was caused by an interrupt; if 0, it was caused by an exception.",
+                "bitmap": "SXLEN-1=Interrupt"
+            },
+            "Exception Code": {
+                "zh": "异常/中断代码。指示具体的中断或异常类型。",
+                "en": "Exception/Interrupt Code. Identifies the specific type of the interrupt or exception.",
+                "bitmap": "SXLEN-2:0=Exception Code"
+            }
+        }
+    },
+    "stval": {
+        "zh": "监管者陷阱值寄存器。提供与监管者模式陷阱相关的附加信息。",
+        "en": "Supervisor Trap Value Register. Provides additional information related to a trap in S-mode.",
+        "bitmap": "SXLEN-1:0=异常相关信息",
+        "bits": {}
+    },
+    "sscratch": {
+        "zh": "监管者暂存寄存器。由监管者模式代码专用，通常用于在处理陷阱时暂存一个寄存器的值。",
+        "en": "Supervisor Scratch Register. Dedicated for use by supervisor mode, typically for holding a register value temporarily during a trap.",
+        "bitmap": "SXLEN-1:0=暂存数据",
+        "bits": {}
+    },
+    "stvec": {
+        "zh": "监管者陷阱向量基地址寄存器。保存监管者模式陷阱处理程序的基地址，并配置向量模式。",
+        "en": "Supervisor Trap Vector Base-Address Register. Holds the base address of the supervisor-mode trap handler and configures its vectoring mode.",
+        "bitmap": "SXLEN-1:2=BASE, 1:0=MODE",
+        "bits": {
+            "BASE": {
+                "zh": "陷阱处理程序的基地址。必须是4字节对齐的。",
+                "en": "Base address of the trap handler. Must be 4-byte aligned.",
+                "bitmap": "SXLEN-1:2=BASE"
+            },
+            "MODE": {
+                "zh": "陷阱处理模式。0表示直接模式（所有陷阱都跳转到BASE），1表示向量模式（中断跳转到BASE + 4 * cause）。",
+                "en": "Trap handling mode. 0 for Direct mode (all traps jump to BASE), 1 for Vectored mode (interrupts jump to BASE + 4 * cause).",
+                "bitmap": "1:0=MODE"
+            }
+        }
+    },
+    "satp": {
+        "zh": "监管者地址转换和保护寄存器。控制监管者模式的地址转换方案。它保存根页表的物理页号（PPN）、地址空间标识符（ASID）和转换模式（MODE）。",
+        "en": "Supervisor Address Translation and Protection Register. Controls supervisor-mode address translation. It holds the physical page number (PPN) of the root page table, an address space identifier (ASID), and the translation mode (MODE).",
+        "bitmap": "63:60=MODE, 59:44=ASID, 43:0=PPN",
+        "bits": {
+            "MODE": {
+                "zh": "地址转换模式。选择地址转换方案，如Bare（不转换）、Sv32、Sv39等。",
+                "en": "Address-translation mode. Selects the address-translation scheme, e.g., Bare (no translation), Sv32, Sv39, etc.",
+                "bitmap": "SXLEN-1:SXLEN-4/1=MODE"
+            },
+            "ASID": {
+                "zh": "地址空间标识符。用于区分不同地址空间的标签，以避免在上下文切换时刷新TLB。",
+                "en": "Address Space Identifier. A tag to distinguish different address spaces to avoid TLB flushes on context switches.",
+                "bitmap": "59:44 (RV64) or 30:22 (RV32)=ASID"
+            },
+            "PPN": {
+                "zh": "物理页号。根页表的基地址除以4 KiB。",
+                "en": "Physical Page Number. The base address of the root page table divided by 4 KiB.",
+                "bitmap": "43:0 (RV64) or 21:0 (RV32)=PPN"
+            }
+        }
+    },
+    "mvendorid": {
+        "zh": "机器供应商ID寄存器。提供核心供应商的JEDEC制造商ID。",
+        "en": "Machine Vendor ID Register. Provides the JEDEC manufacturer ID of the provider of the core.",
+        "bitmap": "31:7=Bank, 6:0=Offset",
+        "bits": {}
+    },
+    "marchid": {
+        "zh": "机器架构ID寄存器。编码硬件线程（hart）的基本微架构。",
+        "en": "Machine Architecture ID Register. Encodes the base microarchitecture of the hart.",
+        "bitmap": "MXLEN-1:0=Architecture ID",
+        "bits": {}
+    },
+    "mimpid": {
+        "zh": "机器实现ID寄存器。提供处理器实现版本的唯一编码。",
+        "en": "Machine Implementation ID Register. Provides a unique encoding of the version of the processor implementation.",
+        "bitmap": "MXLEN-1:0=Implementation",
+        "bits": {}
+    },
+    "mhartid": {
+        "zh": "硬件线程ID寄存器。包含正在执行代码的硬件线程的整数ID。",
+        "en": "Hart ID Register. Contains the integer ID of the hardware thread running the code.",
+        "bitmap": "MXLEN-1:0=Hart ID",
+        "bits": {}
+    },
+    "mcycle": {
+        "zh": "机器周期计数器。计算处理器核心执行的时钟周期数。",
+        "en": "Machine Cycle Counter. Counts the number of clock cycles executed by the processor core.",
+        "bitmap": "63:0=Cycle Count",
+        "bits": {}
+    },
+    "minstret": {
+        "zh": "机器指令退役计数器。计算硬件线程已退役（完成执行）的指令数量。",
+        "en": "Machine Instructions-Retired Counter. Counts the number of instructions the hart has retired.",
+        "bitmap": "63:0=Instruction Count",
+        "bits": {}
+    },
+    "medeleg": {
+        "zh": "机器异常委托寄存器。这是一个位掩码，它的每一位对应一种同步异常。如果某位被设置，当该异常在S模式或U模式下发生时，将由S模式直接处理，而不是陷入更高权限的M模式。",
+        "en": "Machine Exception Delegation Register. A bitmask where each bit corresponds to a synchronous exception. If a bit is set, the corresponding exception, when occurring in S-mode or U-mode, is handled directly by S-mode instead of trapping to M-mode.",
+        "bitmap": "63:0=同步异常委托",
+        "bits": {
+            "bits": {
+                "zh": "每一位对应一个同步异常代码。例如，第8位对应‘来自U模式的环境调用’异常。设置该位会将该异常委托给S模式。",
+                "en": "Each bit corresponds to a synchronous exception code. E.g., bit 8 corresponds to 'Environment call from U-mode'. Setting the bit delegates that exception to S-mode.",
+                "bitmap": "63:0"
+            }
+        }
+    },
+    "mideleg": {
+        "zh": "机器中断委托寄存器。这是一个位掩码，它的每一位对应一个中断源。如果某位被设置，相应的中断将被委托给S模式处理（在sip寄存器中可见），而不是默认地由M模式处理。",
+        "en": "Machine Interrupt Delegation Register. A bitmask where each bit corresponds to an interrupt source. If a bit is set, the corresponding interrupt is delegated to S-mode for handling (becoming visible in the sip register), instead of being handled by default in M-mode.",
+        "bitmap": "MXLEN-1:0=中断委托",
+        "bits": {
+            "bits": {
+                "zh": "每一位对应一个中断代码。例如，第5位对应监管者定时器中断（STIP）。设置该位会将该中断委托给S模式。",
+                "en": "Each bit corresponds to an interrupt code. E.g., bit 5 corresponds to the Supervisor Timer Interrupt (STIP). Setting the bit delegates that interrupt to S-mode.",
+                "bitmap": "MXLEN-1:0"
+            }
+        }
+    }
+}
+
+ 
+
+
 class WhatIsCommand(gdb.Command):
-    '''使用 DeepSeek API 简要介绍寄存器作用，命令格式：whatis <寄存器名>。'''
+    '''从内置寄存器数据库中返回寄存器信息，命令格式：whatis <寄存器名>。'''
 
     def __init__(self):
         super(WhatIsCommand, self).__init__('whatis', gdb.COMMAND_USER)
@@ -2507,47 +2855,44 @@ class WhatIsCommand(gdb.Command):
             Dashboard.err('请提供寄存器名称，例如：whatis rax')
             return
 
-        if OpenAI is None:
-            Dashboard.err('未找到 openai 库，请先执行：pip install openai')
-            return
+        key = register_name.strip().lower()
+        info = REGISTER_DATABASE.get(key)
+        if info:
+            source = 'register'
+            belong = key
+        else:
+            source = 'bit'
+            info = None
+            belong = None
+            for reg_name, reg_info in REGISTER_DATABASE.items():
+                bits = reg_info.get('bits', {})
+                for bit_name, bit_info in bits.items():
+                    if bit_name.lower() == key:
+                        info = bit_info
+                        belong = reg_name
+                        break
+                if info:
+                    break
+            if not info:
+                gdb.write('{} -> 未找到寄存器说明，请在 REGISTER_DATABASE 中补充。\n'.format(register_name))
+                return
 
-        system_prompt = """
-你是一名专注于 RISC-V 架构的处理器导师，需要为调试者快速解释寄存器信息。
+        zh = info.get('zh', '').strip()
+        en = info.get('en', '').strip()
+        bitmap = info.get('bitmap', '').strip()
 
-# 输出要求：
-1. 输出三行内容：
-   - 第一行：用途(中文)：<不超过30个汉字的中文描述，强调寄存器在 RISC-V 中的作用>
-   - 第二行：Purpose (EN): <不超过25个英文单词的简介>
-   - 第三行：位图：<使用简洁的位域图例，例如 "31:20=..., 19:12=..., 11:0=..."，若部分位未定义写作 "保留" 或 "reserved">
-2. 若寄存器不存在标准位定义，可在位图中写 "位图：未公开标准位定义"。
-3. 禁止添加示例、代码块、额外说明或空行。
-"""
+        if not zh:
+            zh = '用途信息待补充'
+        if not en:
+            en = 'Purpose pending update'
+        if not bitmap:
+            bitmap = '位图：待补充'
 
-        user_prompt = '寄存器名称：{}'.format(register_name)
-
-        try:
-            client = OpenAI(
-                api_key=DEEPSEEK_API_KEY,
-                base_url=DEEPSEEK_BASE_URL
-            )
-            response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                stream=False
-            )
-            choice = response.choices[0] if response.choices else None
-            answer = choice.message.content.strip() if choice and choice.message else None
-
-            if answer:
-                gdb.write('{} -> {}\n'.format(register_name, answer))
-            else:
-                gdb.write('DeepSeek 未返回有效说明。\n原始响应: {}\n'.format(response))
-
-        except Exception as exc:
-            Dashboard.err('调用 DeepSeek 失败：{}'.format(exc))
+        if source == 'bit':
+            gdb.write('{} -> 所属寄存器：{}\n'.format(register_name, belong or '待补充'))
+        gdb.write('{} -> 用途(中文)：{}\n'.format(register_name, zh))
+        gdb.write('Purpose (EN): {}\n'.format(en))
+        gdb.write('位图：{}\n'.format(bitmap))
 # Register the custom command
 GhCommand()
 WhatIsCommand()
