@@ -5,6 +5,7 @@
 随后将gdb.sh中的.gdbinit的路径设置正确，.gdbinit中设置.api_key的路径，最好都放在project目录下
 ## 如何使用
 大部分用法参考[gdb dashboard](https://github.com/cyrus-and/gdb-dashboard)
+
 **特殊用法**
 ### 1.gh
 用`gh` 加要求来获取命令提示，按回车接受，随便按一个键加回车拒绝
